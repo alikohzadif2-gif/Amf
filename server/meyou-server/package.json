@@ -1,0 +1,38 @@
+{
+  "name": "meyou-server",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Thin personal server for the meYou app (one couple, two devices).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "meyou-server": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js serve",
+    "dev": "tsx src/cli.ts serve",
+    "init": "node dist/cli.js init",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^11.2.1",
+    "@fastify/websocket": "^11.3.4",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "fastify": "^5.12.7",
+    "firebase-admin": "^14.5.0",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.35.5",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,93 @@
+# meYou server + Caddy (automatic HTTPS). Run from this folder:
+#   cp .env.example .env   (edit DOMAIN and MEYOU_DATA_DIR)
+#   docker compose up -d --build
+services:
+  meyou-server:
+    build:
+      context: .
+      # "host" = build with the VPS network (fixes builds that time out inside Docker's own network)
+      network: ${BUILD_NETWORK:-default}
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+        INSTALL_FFMPEG: ${INSTALL_FFMPEG:-false}
+    image: meyou-server:local
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/ping',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      # Only needed when HTTPS is not on port 443, e.g. https://example.com:8443
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SERVER_NAME: ${SERVER_NAME:-meYou}
+      DATA_DIR: /data
+      PORT: "8080"
+      # Only Caddy can reach this container (no published port), so its
+      # X-Forwarded-* headers are trusted.
+      TRUST_PROXY: "true"
+      # S11: lock an address after this many DIFFERENT bad tokens/codes (0 = off)
+      AUTH_FAIL_MAX: ${AUTH_FAIL_MAX:-10}
+      AUTH_FAIL_WINDOW_MINUTES: ${AUTH_FAIL_WINDOW_MINUTES:-10}
+      AUTH_LOCKOUT_MINUTES: ${AUTH_LOCKOUT_MINUTES:-15}
+      SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-300}
+      UPLOAD_MAX_FILE_MB: ${UPLOAD_MAX_FILE_MB:-20480}
+      UPLOAD_MIN_FREE_MB: ${UPLOAD_MIN_FREE_MB:-512}
+      UPLOAD_SESSION_TTL_HOURS: ${UPLOAD_SESSION_TTL_HOURS:-48}
+      # Push (S9): Firebase service-account key, mounted read-only below. Without the file the server
+      # runs normally and simply does not announce `push`.
+      FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm/service-account.json
+      # R1a: name the period update in the push text ("period started", "in pain", "feeling better").
+      # Off by default: the text then passes through Google. Set PUSH_PERIOD_DETAIL=true in .env to turn it on.
+      PUSH_PERIOD_DETAIL: ${PUSH_PERIOD_DETAIL:-false}
+      # Encrypted queue (sharing track): defaults are the server's own; set them in .env to change them.
+      # A big video needs a higher MAILBOX_RATE_LIMIT_MAX (every 256 KB chunk is one request, plus list and ack calls).
+      MAILBOX_RATE_LIMIT_MAX: ${MAILBOX_RATE_LIMIT_MAX:-300}
+      E2E_MAX_BLOB_KB: ${E2E_MAX_BLOB_KB:-1024}
+      E2E_TTL_DAYS: ${E2E_TTL_DAYS:-30}
+      E2E_MAX_QUEUE_MB: ${E2E_MAX_QUEUE_MB:-256}
+    volumes:
+      - ${MEYOU_DATA_DIR:-/srv/meyou}:/data
+      # Folder (not a single file, so Docker never creates a directory in its place) that holds
+      # service-account.json. Install it with:  sudo ./setup.sh push-key <your-key.json>
+      - ${FCM_SECRETS_DIR:-./secrets}:/run/secrets/fcm:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      meyou-server:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      HTTP_PORT: ${HTTP_PORT:-80}
+      HTTPS_PORT: ${HTTPS_PORT:-443}
+    ports:
+      # Let's Encrypt checks the domain through PUBLIC port 80 (see README: custom ports).
+      - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

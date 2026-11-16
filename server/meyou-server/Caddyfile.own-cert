@@ -1,0 +1,11 @@
+# Use YOUR OWN certificate files (no Let's Encrypt, no port 80 needed, any HTTPS port).
+# Files expected inside the container: /certs/fullchain.pem and /certs/privkey.pem
+# (docker-compose.own-cert.yml mounts the host folder CERT_DIR there).
+{
+	auto_https off
+}
+
+https://{$DOMAIN}:{$HTTPS_PORT:443} {
+	tls /certs/fullchain.pem /certs/privkey.pem
+	reverse_proxy meyou-server:8080
+}
