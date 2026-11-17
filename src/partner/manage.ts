@@ -129,12 +129,24 @@ function noKeysNotice(): void {
  */
 async function publishPartner(connection: MailboxConnection, message: PartnerMessage): Promise<{ msgId: string }> {
   if (!(await e2eKeys())) {
+    traceEvent(`send ${message.t} failed: this phone has no keys for private messages (pair again with the one-QR invitation)`);
     noKeysNotice();
     throw new NoKeysError();
   }
   const client = new MailboxClient(connection);
-  const id = await sendEncrypted({ sodium: nativeSodium, keys: e2eKeys, client }, message as unknown as Record<string, unknown>);
-  return { msgId: `e:${id}` };
+  try {
+    const id = await sendEncrypted({ sodium: nativeSodium, keys: e2eKeys, client }, message as unknown as Record<string, unknown>);
+    return { msgId: `e:${id}` };
+  } catch (error) {
+    // The reason goes to the diagnostics report: "could not send" alone does not say whether it is the keys, the token or the network.
+    traceEvent(`send ${message.t} failed: ${describeSendError(error)}`);
+    throw error;
+  }
+}
+
+function describeSendError(error: unknown): string {
+  if (isMailboxError(error)) return `server answer kind=${error.kind} status=${error.status ?? '-'} key=${error.errorKey ?? '-'}`;
+  return error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 160) : 'unknown error';
 }
 
 /** Stage 6: every original-file message is sealed and sent through the encrypted queue only; there is no plain fallback for a file. */
@@ -1554,6 +1566,10 @@ export async function syncMailbox(): Promise<void> {
 export const pushRouter = createPushRouter({ sync: () => void syncMailbox() });
 
 let pushSyncing: Promise<PushState> | null = null;
+/** At least this long between two registrations, and at most this many repeats of one run. */
+const PUSH_MIN_GAP_MS = 8000;
+const PUSH_MAX_REPEATS = 1;
+let pushLastEnd = 0;
 let pushAgain = false;
 
 async function runPushSync(): Promise<PushState> {
@@ -1585,11 +1601,23 @@ export function syncPushRegistration(): Promise<PushState> {
     return pushSyncing;
   }
   pushSyncing = (async () => {
-    let result = await runPushSync();
-    while (pushAgain) {
+    // Runs are spaced out: a trigger that fires again and again (seen in a server log: /me + /push/token several times a
+    // second until the server answered 429) can never become a request storm. A real change waits a few seconds at most.
+    const spaced = async () => {
+      const wait = PUSH_MIN_GAP_MS - (Date.now() - pushLastEnd);
+      if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
+      try {
+        return await runPushSync();
+      } finally {
+        pushLastEnd = Date.now();
+      }
+    };
+    let result = await spaced();
+    for (let again = 0; pushAgain && again < PUSH_MAX_REPEATS; again++) {
       pushAgain = false;
-      result = await runPushSync();
+      result = await spaced();
     }
+    pushAgain = false;
     return result;
   })().finally(() => {
     pushSyncing = null;
