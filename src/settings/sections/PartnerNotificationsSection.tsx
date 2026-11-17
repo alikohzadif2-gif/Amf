@@ -67,7 +67,6 @@ export default function PartnerNotificationsSection() {
       <SettingGroup>
         <InfoRow title="profilePartner" value={t(paired ? 'partnerStatusPaired' : 'partnerStatusNone')} />
         <NavRow title={paired ? 'pairShowMine' : 'pairPartner'} onPress={() => router.push('/settings/pair')} />
-        <NavRow title="e2eRow" description="e2eRowDesc" onPress={() => router.push('/settings/secure-pairing')} />
         <NavRow title="partnerProfile" onPress={() => router.push('/settings/partner-profile')} />
         {paired ? <ActionRow title="unpairPartner" destructive onPress={confirmUnpair} /> : null}
       </SettingGroup>
