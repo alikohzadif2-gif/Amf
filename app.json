@@ -1,0 +1,112 @@
+{
+  "expo": {
+    "name": "meYou",
+    "slug": "meyou",
+    "version": "2.0.0",
+    "platforms": [
+      "android"
+    ],
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "meyou",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "ir.maryafox.meyou",
+      "versionCode": 4,
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "monochromeImage": "./assets/images/adaptive-icon-monochrome.png",
+        "backgroundColor": "#FFFCF5"
+      },
+      "blockedPermissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#F6F8FB",
+          "dark": {
+            "image": "./assets/images/splash-icon.png",
+            "backgroundColor": "#040B15"
+          }
+        }
+      ],
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "meYou uses the camera to scan QR codes, take photos for your library and create stories.",
+          "microphonePermission": "meYou uses the microphone to record sound in story videos.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "meYou lets you pick photos and videos to add to your library.",
+          "cameraPermission": "meYou uses the camera to take photos you add to your library.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-secure-store",
+      "react-native-libsodium",
+      "./plugins/with-high-refresh-rate",
+      "./plugins/with-backup-exclude",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/adaptive-icon-monochrome.png",
+          "defaultChannel": "meyou-partner-v2"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "meYou needs access to your photos and videos to show them in your library.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "DaysTogether",
+              "label": "meYou",
+              "description": "Days together",
+              "minWidth": "110dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

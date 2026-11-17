@@ -1,0 +1,54 @@
+# meYou server: tests + Docker build. Separate from the APK workflow (build-apk.yml).
+name: Server tests
+
+on:
+  push:
+    paths:
+      - "server/meyou-server/**"
+      - ".github/workflows/server-tests.yml"
+  pull_request:
+    paths:
+      - "server/meyou-server/**"
+      - ".github/workflows/server-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server/meyou-server
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/meyou-server/package-lock.json
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build the Docker image
+        run: docker build -t meyou-server:ci .
+
+      - name: Smoke test the image
+        run: |
+          docker run -d --name meyou-ci -e DOMAIN=ci.example.com -p 18080:8080 meyou-server:ci
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:18080/api/v1/ping && break || sleep 1; done
+          curl -fs http://127.0.0.1:18080/api/v1/ping | grep '"features"'
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/api/v1/me)
+          test "$code" = "401"
+          docker exec meyou-ci meyou-server init | grep 'meyou://server'
+          docker exec meyou-ci meyou-server init | grep 'Already initialized'
+          docker rm -f meyou-ci

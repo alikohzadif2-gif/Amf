@@ -1,0 +1,10 @@
+minimumReleaseAgeExclude:
+  - expo-constants@57.0.22
+  - expo-notifications@57.0.23
+
+# pnpm 10 skips dependency install scripts by default. react-native-libsodium
+# needs its postinstall (it unpacks libsodium/build.tgz, the prebuilt native
+# libsodium for Android/iOS); without it the Android CMake build fails with
+# "libsodium.so ... missing and no known rule to make it".
+onlyBuiltDependencies:
+  - react-native-libsodium
