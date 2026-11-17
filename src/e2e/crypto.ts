@@ -115,3 +115,11 @@ export function parseKeyQr(raw: string): Uint8Array | null {
   const sealed = m ? b64urlDecode(m[1]) : null;
   return sealed?.length === SEALED_LEN ? sealed : null;
 }
+
+/** One-QR pairing: the master key as it appears in the invitation link (`mk=`): 32 bytes, base64url, 43 characters. */
+export function parseDirectKey(raw: string): Uint8Array | null {
+  const text = raw.trim();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(text)) return null;
+  const key = b64urlDecode(text);
+  return key?.length === KEY_LEN ? key : null;
+}

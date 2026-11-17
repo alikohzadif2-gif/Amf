@@ -8,6 +8,7 @@ import {
   newMasterKey,
   newNonce,
   openPairingKey,
+  parseDirectKey,
   parseKeyQr,
   parseRequestQr,
   safetyCode,
@@ -25,6 +26,11 @@ import type { KvStore } from './key-store';
  *   Phone B  acceptKey()      scans QR 2 and opens it
  *   both     confirm()        after comparing the same 12-digit safety code
  * Nothing here touches the server. Keys are only usable (`getKeys`) after `confirm()` on this phone.
+ *
+ * One-QR pairing (the normal way, `createDirect` / `acceptDirect`): the owner's invitation QR already carries the
+ * master key next to the server invite, so ONE scan in person connects the phone to the server and gives it the
+ * keys. There is no second QR and no code to compare: the key travels only camera-to-screen, never through the
+ * server or a messenger, so nobody can swap it. The in-person two-QR flow above stays for pairing from a distance.
  */
 const KEY_RECORD = 'meyou-e2e-v1';
 const PENDING_RECORD = 'meyou-e2e-pending-v1';
@@ -70,6 +76,8 @@ export function createE2ePairing(deps: { sodium: Sodium; store: KvStore; now?: (
     }
   }
   const codeOf = (r: KeyRecord) => {
+    // One-QR pairing has no public keys to mix in: the code is then derived from the shared key alone, so both phones agree.
+    if (!r.partnerPk) return safetyCode(s, dec(r.master), new Uint8Array(0), new Uint8Array(0));
     const a = r.role === 'a' ? dec(r.pk) : dec(r.partnerPk);
     const b = r.role === 'a' ? dec(r.partnerPk) : dec(r.pk);
     return safetyCode(s, dec(r.master), a, b);
@@ -159,6 +167,41 @@ export function createE2ePairing(deps: { sodium: Sodium; store: KvStore; now?: (
     await store.remove(KEY_RECORD);
   }
 
+  /**
+   * Owner phone, one-QR pairing: returns the master key (base64url) to put inside the invitation QR.
+   * Idempotent: every invitation of the same unpaired owner carries the SAME key, so an older QR that is still
+   * valid on the server can never give the partner a key the owner does not have.
+   */
+  async function createDirect(): Promise<{ ok: true; key: string } | { ok: false; reason: 'storage' }> {
+    try {
+      const existing = await readRecord();
+      if (existing?.role === 'a' && existing.confirmed && dec(existing.master).length === KEY_LEN) return { ok: true, key: existing.master };
+      const kp = newKeyPair(s);
+      const master = newMasterKey(s);
+      const record: KeyRecord = { role: 'a', sk: b64urlEncode(kp.privateKey), pk: b64urlEncode(kp.publicKey), partnerPk: '', master: b64urlEncode(master), confirmed: true, createdAt: now() };
+      await store.remove(PENDING_RECORD);
+      await store.set(KEY_RECORD, JSON.stringify(record));
+      return { ok: true, key: record.master };
+    } catch {
+      return { ok: false, reason: 'storage' };
+    }
+  }
+
+  /** Partner phone, one-QR pairing: stores the master key from the scanned invitation. The keys are usable at once. */
+  async function acceptDirect(key: string): Promise<{ ok: true } | { ok: false; reason: 'invalid' | 'storage' }> {
+    const master = parseDirectKey(key);
+    if (!master) return { ok: false, reason: 'invalid' };
+    try {
+      const kp = newKeyPair(s);
+      const record: KeyRecord = { role: 'b', sk: b64urlEncode(kp.privateKey), pk: b64urlEncode(kp.publicKey), partnerPk: '', master: b64urlEncode(master), confirmed: true, createdAt: now() };
+      await store.remove(PENDING_RECORD);
+      await store.set(KEY_RECORD, JSON.stringify(record));
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: 'storage' };
+    }
+  }
+
   async function status(): Promise<E2eStatus> {
     const r = await readRecord();
     if (r) return r.confirmed ? { state: 'paired', code: codeOf(r), role: r.role, createdAt: r.createdAt } : { state: 'unconfirmed', code: codeOf(r), role: r.role };
@@ -173,7 +216,7 @@ export function createE2ePairing(deps: { sodium: Sodium; store: KvStore; now?: (
     return { ...deriveDirectionKeys(s, dec(r.master), r.role), partnerPublicKey: dec(r.partnerPk), role: r.role };
   }
 
-  return { startRequest, acceptRequest, acceptKey, confirm, cancel, reset, status, getKeys };
+  return { startRequest, acceptRequest, acceptKey, createDirect, acceptDirect, confirm, cancel, reset, status, getKeys };
 }
 
 export type E2ePairing = ReturnType<typeof createE2ePairing>;
