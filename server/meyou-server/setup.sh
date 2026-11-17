@@ -2,7 +2,8 @@
 # meYou server: install and maintenance in one script (Ubuntu/Debian VPS, run as root).
 #
 #   sudo ./setup.sh              install (asks a few questions, builds, starts, prints the pairing link)
-#   sudo ./setup.sh update       rebuild the image and restart (data and token are kept)
+#   sudo ./setup.sh update       download the image built by GitHub Actions and restart (data and token are kept)
+#   sudo ./setup.sh update --build   same, but build the image on this server (slow; only if the download fails)
 #   sudo ./setup.sh status       containers + local ping
 #   sudo ./setup.sh logs [svc]   follow logs (svc: caddy or meyou-server)
 #   sudo ./setup.sh init         print the pairing link again ONLY on a fresh database (see INSTALL.fa.md)
@@ -114,6 +115,22 @@ build_image() {
     --build-arg "NODE_IMAGE=$(get_env NODE_IMAGE)" \
     --build-arg "NPM_REGISTRY=$(get_env NPM_REGISTRY)" .
 }
+# The image is built by GitHub Actions (.github/workflows/server-image.yml) and only downloaded here, so
+# an update costs the VPS almost no CPU/RAM/bandwidth. Building on the VPS is the fallback.
+REMOTE_DEFAULT="ghcr.io/alikohzadif2-gif/meyou-server:latest"
+fetch_image() {
+  local remote; remote="$(get_env REMOTE_IMAGE)"; remote="${remote:-$REMOTE_DEFAULT}"
+  if [ "${FORCE_BUILD:-0}" != "1" ] && [ "$remote" != "none" ]; then
+    say "Downloading the prebuilt image ($remote)"
+    if timeout 1200 docker pull "$remote"; then
+      docker tag "$remote" "$IMAGE"
+      return 0
+    fi
+    warn "Could not download the prebuilt image (is the GitHub Actions run finished? is the package public?)."
+    warn "Building here instead: slow, and it can starve other services on a small VPS."
+  fi
+  build_image
+}
 start_stack() { say "Starting"; compose up -d; }
 
 local_ping() {   # ping through Caddy on this machine (proves certificate + proxy + server)
@@ -191,7 +208,7 @@ cmd_install() {
 
   pick_images_and_registry
   open_firewall "$port"
-  build_image
+  fetch_image
   start_stack
 
   say "Waiting for the server to answer through HTTPS on this machine"
@@ -214,7 +231,8 @@ EOF2
 cmd_update() {
   need_root update; need_docker
   [ -f "$ENV_FILE" ] || die "No .env here: run  sudo ./setup.sh  first."
-  build_image; start_stack
+  [ "${1:-}" = "--build" ] && FORCE_BUILD=1
+  fetch_image; start_stack
   say "Waiting for the server"; wait_ping || { warn "No answer. See: sudo ./setup.sh logs"; exit 1; }
 }
 cmd_status() {
@@ -265,7 +283,7 @@ cmd_stop()  { need_root stop; need_docker; compose down; info "Stopped. Data is 
 
 case "${1:-install}" in
   install)    cmd_install ;;
-  update)     cmd_update ;;
+  update)     shift; cmd_update "$@" ;;
   status)     cmd_status ;;
   logs)       shift; cmd_logs "$@" ;;
   init)       cmd_init ;;
