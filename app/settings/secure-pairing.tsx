@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Share } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
@@ -48,6 +48,9 @@ export default function SecurePairingScreen() {
 
   // Open on the right step when the person comes back (the keys live in SecureStore).
   useEffect(() => {
+    // A link that opened this screen starts its own step below; reading the old stored state at the same time
+    // could put an OLD safety code on screen after the new one (the two phones then showed different digits).
+    if (typeof params.c === 'string' && params.c) return;
     let alive = true;
     void e2ePairing().status().then((s) => {
       if (!alive) return;
@@ -67,18 +70,31 @@ export default function SecurePairingScreen() {
     setQr(r.qr);
     setMode('show-req');
   };
+  const stepping = useRef(false);
   const onScanReq = async (raw: string) => {
-    const r = await e2ePairing().acceptRequest(raw);
-    if (!r.ok) return fail(r.reason);
-    setQr(r.qr);
-    setCode(r.code);
-    setMode('show-key');
+    if (stepping.current) return;
+    stepping.current = true;
+    try {
+      const r = await e2ePairing().acceptRequest(raw);
+      if (!r.ok) return fail(r.reason);
+      setQr(r.qr);
+      setCode(r.code);
+      setMode('show-key');
+    } finally {
+      stepping.current = false;
+    }
   };
   const onScanKey = async (raw: string) => {
-    const r = await e2ePairing().acceptKey(raw);
-    if (!r.ok) return fail(r.reason);
-    setCode(r.code);
-    setMode('code');
+    if (stepping.current) return;
+    stepping.current = true;
+    try {
+      const r = await e2ePairing().acceptKey(raw);
+      if (!r.ok) return fail(r.reason);
+      setCode(r.code);
+      setMode('code');
+    } finally {
+      stepping.current = false;
+    }
   };
   // Pairing by link: the same two payloads as the QR codes, from a link that was opened or pasted.
   const onPayload = async (raw: string) => {
@@ -120,8 +136,14 @@ export default function SecurePairingScreen() {
     </View>
   );
 
+  // Always left-to-right, group by group: in a right-to-left language one text line showed the three groups reversed,
+  // so two phones with the same code looked different.
   const codeBlock = (
-    <Text selectable style={{ color: colors.foreground, fontFamily: fontFamilyFor(language, 'semibold'), fontSize: 28, letterSpacing: 2, textAlign: 'center', marginVertical: 14 }}>{code}</Text>
+    <View style={{ flexDirection: 'row', direction: 'ltr', justifyContent: 'center', gap: 16, marginVertical: 14 }}>
+      {code.split(' ').map((group, i) => (
+        <Text key={i} selectable style={{ color: colors.foreground, fontFamily: fontFamilyFor(language, 'semibold'), fontSize: 28, letterSpacing: 2, writingDirection: 'ltr' }}>{group}</Text>
+      ))}
+    </View>
   );
 
   return (
