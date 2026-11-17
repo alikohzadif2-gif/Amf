@@ -15,7 +15,9 @@ export function parseMailboxInvite(raw: string): MailboxInvitePayload | null {
     const target = new URL(url);
     if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) return null;
     if (!/^[A-HJKMNP-Z2-9]{24}$/.test(code.toUpperCase())) return null;
-    return { url: target.toString().replace(/\/+$/, ''), code: code.toUpperCase() };
+    const key = link.searchParams.get('mk')?.trim();
+    if (key !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(key)) return null;
+    return { url: target.toString().replace(/\/+$/, ''), code: code.toUpperCase(), ...(key ? { key } : {}) };
   } catch {
     return null;
   }

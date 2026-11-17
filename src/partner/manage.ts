@@ -545,14 +545,18 @@ export async function beginPairing(serverEntryId: string): Promise<InviteStartRe
     if (me.role !== 'owner') return { kind: 'error', reason: 'owner' };
     if (me.household.partner) return { kind: 'error', reason: 'full' };
     const invite = await client.createInvite();
+    // One-QR pairing: the invitation also carries the master key of the private messages, so one scan does both.
+    const keys = await e2ePairing().createDirect();
+    if (!keys.ok) return { kind: 'error', reason: 'storage' };
+    const link = `${invite.link}${invite.link.includes('?') ? '&' : '?'}mk=${keys.key}`;
     pendingInvite = {
       connection,
       deviceId: me.deviceId,
       serverName: entry.name,
-      link: invite.link,
+      link,
       expiresAt: invite.expiresAt,
     };
-    return { kind: 'ready', ...invite, serverName: entry.name };
+    return { kind: 'ready', link, expiresAt: invite.expiresAt, serverName: entry.name };
   } catch (error) {
     return { kind: 'error', reason: inviteFailure(error) };
   }
@@ -608,7 +612,7 @@ export type JoinFailure = 'invalid' | 'full' | 'network' | 'storage' | 'already'
 
 /** Phone 2 joins with the one-time invite, then keeps its own returned token in SecureStore. */
 export async function acceptPairing(
-  invite: { url: string; code: string },
+  invite: { url: string; code: string; key?: string },
   rawDeviceName: string,
 ): Promise<'ok' | JoinFailure> {
   if (store().paired) return 'already';
@@ -640,11 +644,23 @@ export async function acceptPairing(
       }
       return 'invalid';
     }
+    // One-QR pairing: keep the master key from the invitation BEFORE the pairing becomes visible (sendProfile needs it).
+    if (invite.key) {
+      const keys = await e2ePairing().acceptDirect(invite.key);
+      if (!keys.ok) throw new Error('storage: could not save the keys');
+    }
     await savePairedConnection(connection, me, 'member', partner.deviceId);
     store().setPartner({ name: partner.name });
     void sendProfile(true);
     return 'ok';
   } catch (error) {
+    if (invite.key) {
+      try {
+        await e2ePairing().reset();
+      } catch {
+        // The next pairing replaces the keys anyway.
+      }
+    }
     if (storedToken) {
       try {
         await secureTokenStore.remove(PARTNER_TOKEN_KEY);

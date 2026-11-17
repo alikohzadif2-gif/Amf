@@ -73,7 +73,8 @@ export type { SyncMessage };
 export type PartnerMessage = SyncMessage | OrigMessage | MediaMessage | LikeMessage | CommentMessage | ChatSeenMessage | ChatMessage | MoodMessage | MoodClearedMessage | EventMessage | ProfileMessage | UnpairMessage | DiaryMessage | PeriodMessage | StoryMessage | StorySeenMessage;
 
 /** A server-issued, single-use invitation in the `meyou://join` link. */
-export type MailboxInvitePayload = { url: string; code: string };
+/** `key` = the master key of the one-QR pairing (`mk=`); absent in invitations made by older versions. */
+export type MailboxInvitePayload = { url: string; code: string; key?: string };
 
 export type MoodRow = {
   id: number;
