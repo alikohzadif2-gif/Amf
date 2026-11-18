@@ -103,9 +103,8 @@ const safeDelete = (file: File): void => {
 async function transferOne(db: Db, row: { id: number; src: string; rel: string; size: number; mode: ImportMode; status: string }): Promise<{ status: 'done' | 'kept' | 'failed'; error?: string }> {
   const t0 = Date.now();
   const target = vaultFile(row.rel); // app-private file:// path: cheap
-  let source: File | null = null; // created only when it is really needed (a resumed row whose copy is already there needs no source until its delete)
+  const source = new File(row.src); // only a handle: nothing is asked of the file manager until a method is called
   if (row.status === 'pending') {
-    source = new File(row.src);
     try {
       ensureParents(row.rel);
       safeDelete(target); // a half-written copy from an interrupted run
@@ -137,7 +136,7 @@ async function transferOne(db: Db, row: { id: number; src: string; rel: string; 
   else if (verdict !== 'delete') outcome = { status: 'kept', error: verdict };
   else {
     try {
-      (source ?? new File(row.src)).delete();
+      source.delete();
       outcome = { status: 'done' };
     } catch {
       outcome = { status: 'kept', error: 'delete-failed' }; // e.g. a file picked with the file chooser cannot be deleted by the app
