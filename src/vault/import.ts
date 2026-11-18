@@ -14,6 +14,7 @@ import * as Crypto from 'expo-crypto';
 import { Directory, File } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { create } from 'zustand';
+import { logEvent } from '../diagnostics/log';
 import { galleryFileAdded, galleryFlushNow } from '../gallery/outbox';
 import { recordGalleryAdd } from '../gallery/gallery-db';
 import { createJob, discardJob, enqueue, finishedJob, jobInfo, markRow, nextRows, openJobs, putItem, takenPaths, type JobInfo } from './db';
@@ -84,37 +85,43 @@ export const pauseJob = (): void => {
   cancel = true;
 };
 
-/** Copy of one queue row, checked by size. Returns the status to store. */
+const safeDelete = (file: File): void => {
+  try {
+    file.delete();
+  } catch {
+    // not there / cannot delete: nothing to clean
+  }
+};
+
+/**
+ * Copy of one queue row, checked by size. Returns the status to store.
+ * SPEED: `source.exists`, `source.size` and `new File(uri)` on a document-provider (SAF) uri are SYNCHRONOUS calls to the file manager on the JS
+ * thread, and some providers answer slowly. So the source is asked NOTHING here: no `exists` before the copy (a missing source makes the copy
+ * throw), and no second size read after it. The size of the source is the one read while scanning (`row.size`); the copy must match it exactly.
+ * A source that changed since the scan simply fails the size check: the copy is removed and the original is never touched.
+ */
 async function transferOne(db: Db, row: { id: number; src: string; rel: string; size: number; mode: ImportMode; status: string }): Promise<{ status: 'done' | 'kept' | 'failed'; error?: string }> {
-  const source = new File(row.src);
-  const target = vaultFile(row.rel);
+  const t0 = Date.now();
+  const target = vaultFile(row.rel); // app-private file:// path: cheap
+  let source: File | null = null; // created only when it is really needed (a resumed row whose copy is already there needs no source until its delete)
   if (row.status === 'pending') {
-    if (!source.exists) return { status: 'failed', error: 'source-missing' };
+    source = new File(row.src);
     try {
       ensureParents(row.rel);
-      if (target.exists) target.delete(); // a half-written copy from an interrupted run
+      safeDelete(target); // a half-written copy from an interrupted run
       await source.copy(target);
     } catch {
-      try {
-        if (target.exists) target.delete();
-      } catch {
-        // ignore
-      }
+      safeDelete(target);
       return { status: 'failed', error: 'copy-failed' };
     }
   } else if (!target.exists) {
     return { status: 'failed', error: 'copy-missing' };
   }
-  // size of the source NOW (null = the phone does not say: the copy is kept, the original too); the scan size is only the fallback for the copy check
-  const sourceNow = source.exists ? sizeOf(source) ?? null : null;
+  const t1 = Date.now();
   const targetSize = sizeOf(target) ?? -1;
-  const expected = sourceNow ?? (row.size > 0 ? row.size : null);
+  const expected = row.size > 0 ? row.size : null; // null = the scan did not know the size
   if (expected !== null && targetSize !== expected) {
-    try {
-      target.delete();
-    } catch {
-      // ignore
-    }
+    safeDelete(target);
     return { status: 'failed', error: 'size-mismatch' };
   }
   const itemSize = targetSize >= 0 ? targetSize : row.size;
@@ -122,15 +129,23 @@ async function transferOne(db: Db, row: { id: number; src: string; rel: string; 
   // Gallery list: the partner is told about this file (a list entry only; nothing else is sent now). `row.id` only grows = the copy order.
   await recordGalleryAdd(db, { id: itemId, o: row.id, rel: row.rel, size: itemSize }).catch(() => undefined);
   galleryFileAdded(db);
-  const verdict = deleteVerdict({ mode: row.mode, sourceSize: sourceNow, targetSize });
-  if (verdict === 'copy-mode') return { status: 'done' };
-  if (verdict !== 'delete') return { status: 'kept', error: verdict };
-  try {
-    source.delete();
-    return { status: 'done' };
-  } catch {
-    return { status: 'kept', error: 'delete-failed' }; // e.g. a file picked with the file chooser cannot be deleted by the app
+  const t2 = Date.now();
+  // delete only when the copy matches the size the source had (scan size); an unknown size keeps the original
+  const verdict = deleteVerdict({ mode: row.mode, sourceSize: expected, targetSize });
+  let outcome: { status: 'done' | 'kept' | 'failed'; error?: string };
+  if (verdict === 'copy-mode') outcome = { status: 'done' };
+  else if (verdict !== 'delete') outcome = { status: 'kept', error: verdict };
+  else {
+    try {
+      (source ?? new File(row.src)).delete();
+      outcome = { status: 'done' };
+    } catch {
+      outcome = { status: 'kept', error: 'delete-failed' }; // e.g. a file picked with the file chooser cannot be deleted by the app
+    }
   }
+  // Timing per step (ms), so a slow phone/file manager shows exactly where the time goes.
+  logEvent('info', `vault transfer #${row.id}: copy ${t1 - t0}ms, check+db ${t2 - t1}ms, source-delete ${Date.now() - t2}ms, ${row.size}B, ${row.mode}`);
+  return outcome;
 }
 
 let busy = false;
