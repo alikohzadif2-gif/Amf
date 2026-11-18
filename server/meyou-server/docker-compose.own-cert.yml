@@ -1,0 +1,85 @@
+# meYou server + Caddy using a certificate you already have for DOMAIN.
+# Use this file INSTEAD of docker-compose.yml when port 80 / 443 are not available:
+#   docker compose -f docker-compose.own-cert.yml up -d --build
+# Only HTTPS_PORT is published (UDP too, for HTTP/3). Nothing listens on port 80.
+services:
+  meyou-server:
+    build:
+      context: .
+      # "host" = build with the VPS network (fixes builds that time out inside Docker's own network)
+      network: ${BUILD_NETWORK:-default}
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    image: meyou-server:local
+    restart: unless-stopped
+    # Shared 1 GB VPS (xray/paqet run next to this): hard caps so a bug here can never starve them.
+    mem_limit: ${SERVER_MEM_LIMIT:-256m}
+    memswap_limit: ${SERVER_MEM_LIMIT:-256m}
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/ping',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SERVER_NAME: ${SERVER_NAME:-meYou}
+      DATA_DIR: /data
+      PORT: "8080"
+      TRUST_PROXY: "true"
+      # S11: lock an address after this many DIFFERENT bad tokens/codes (0 = off)
+      AUTH_FAIL_MAX: ${AUTH_FAIL_MAX:-10}
+      AUTH_FAIL_WINDOW_MINUTES: ${AUTH_FAIL_WINDOW_MINUTES:-10}
+      AUTH_LOCKOUT_MINUTES: ${AUTH_LOCKOUT_MINUTES:-15}
+      # Push (S9): Firebase service-account key, mounted read-only below. Without the file the server
+      # runs normally and simply does not announce `push`.
+      FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm/service-account.json
+      # Encrypted queue (sharing track): defaults are the server's own; set them in .env to change them.
+      # MAILBOX_RATE_LIMIT_MAX = requests per minute per IP on /e2e/*: a big video is hundreds of chunks (one POST each, plus list/ack).
+      MAILBOX_RATE_LIMIT_MAX: ${MAILBOX_RATE_LIMIT_MAX:-1200}
+      E2E_MAX_BLOB_KB: ${E2E_MAX_BLOB_KB:-1024}
+      E2E_TTL_DAYS: ${E2E_TTL_DAYS:-30}
+      E2E_MAX_QUEUE_MB: ${E2E_MAX_QUEUE_MB:-256}
+    volumes:
+      - ${MEYOU_DATA_DIR:-/srv/meyou}:/data
+      # Folder (not a single file, so Docker never creates a directory in its place) that holds
+      # service-account.json. Install it with:  sudo ./setup.sh push-key <your-key.json>
+      - ${FCM_SECRETS_DIR:-./secrets}:/run/secrets/fcm:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      meyou-server:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      HTTPS_PORT: ${HTTPS_PORT:?set HTTPS_PORT in .env}
+    ports:
+      - "${HTTPS_PORT}:${HTTPS_PORT}"
+      - "${HTTPS_PORT}:${HTTPS_PORT}/udp"
+    volumes:
+      - ./Caddyfile.own-cert:/etc/caddy/Caddyfile:ro
+      - ${CERT_DIR:-/srv/meyou-certs}:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
